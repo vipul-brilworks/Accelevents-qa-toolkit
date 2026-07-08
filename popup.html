@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Accelevents QA Toolkit</title>
+    <link rel="stylesheet" href="styles/popup.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar" aria-label="Toolkit navigation">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">A</span>
+          <div>
+            <h1>QA Toolkit</h1>
+            <p id="eventSlug">Detecting event...</p>
+          </div>
+        </div>
+
+        <nav class="nav-list">
+          <button class="nav-item active" data-section="orders" type="button">Orders</button>
+          <button class="nav-item" data-section="attendees" type="button">Attendees</button>
+          <button class="nav-item" data-section="speakers" type="button">Speakers</button>
+          <button class="nav-item" data-section="exhibitors" type="button">Exhibitors</button>
+          <button class="nav-item" data-section="coupons" type="button">Coupons</button>
+          <button class="nav-item" data-section="sessions" type="button">Sessions</button>
+          <button class="nav-item" data-section="apiExplorer" type="button">API Explorer</button>
+          <button class="nav-item" data-section="testData" type="button">Test Data Generator</button>
+          <button class="nav-item" data-section="logs" type="button">Logs</button>
+        </nav>
+      </aside>
+
+      <section class="content">
+        <div id="unsupported" class="banner hidden" role="status">
+          Open this extension on a <strong>https://www.devaccel.com/*</strong> admin page.
+        </div>
+
+        <section class="panel active" id="orders">
+          <section class="context-card" aria-label="Detected environment">
+            <div>
+              <dt>Environment</dt>
+              <dd id="contextEnvironment">Detecting...</dd>
+            </div>
+            <div>
+              <dt>Website</dt>
+              <dd id="contextWebsite">Detecting...</dd>
+            </div>
+            <div>
+              <dt>API</dt>
+              <dd id="contextApi">Detecting...</dd>
+            </div>
+            <div>
+              <dt>Current Event</dt>
+              <dd id="contextEvent">Detecting...</dd>
+            </div>
+          </section>
+
+          <header class="panel-header">
+            <div>
+              <h2>Orders</h2>
+              <p>Delete, export, and search QA order data for the current event.</p>
+            </div>
+            <div class="header-actions">
+              <button id="refreshOrdersBtn" class="secondary" type="button">Refresh</button>
+              <button id="exportPreviewBtn" class="secondary" type="button">Export</button>
+            </div>
+          </header>
+
+          <div class="feature-strip" aria-label="Order tools">
+            <span class="available">✓ Delete</span>
+            <span class="available">✓ Export</span>
+            <span class="available">✓ Search</span>
+          </div>
+
+          <section class="toolbar" aria-label="Order filters">
+            <label>
+              Buyer email
+              <input id="buyerFilter" type="search" placeholder="buyer@example.com" autocomplete="off">
+            </label>
+            <label>
+              Holder email
+              <input id="holderFilter" type="search" placeholder="holder@example.com" autocomplete="off">
+            </label>
+            <label>
+              Status
+              <select id="statusFilter">
+                <option value="">Any status</option>
+              </select>
+            </label>
+            <label>
+              Ticket type
+              <select id="ticketTypeFilter">
+                <option value="">Any ticket</option>
+              </select>
+            </label>
+            <label>
+              Price
+              <select id="priceFilter">
+                <option value="">Free or paid</option>
+                <option value="free">Free</option>
+                <option value="paid">Paid</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="controls">
+            <button id="loadOrdersBtn" class="primary" type="button">Load Orders</button>
+            <button id="selectVisibleBtn" class="secondary" type="button">Select Visible</button>
+            <button id="clearSelectionBtn" class="secondary" type="button">Clear Selection</button>
+            <label class="concurrency">
+              Concurrency
+              <select id="concurrencySelect">
+                <option value="1">1</option>
+                <option value="3">3</option>
+                <option value="5">5</option>
+              </select>
+            </label>
+          </section>
+
+          <div class="stats-grid" aria-live="polite">
+            <div><strong id="totalCount">0</strong><span>Total</span></div>
+            <div><strong id="visibleCount">0</strong><span>Visible</span></div>
+            <div><strong id="selectedCount">0</strong><span>Selected</span></div>
+            <div><strong id="loadedPages">0</strong><span>Pages</span></div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col"><input id="toggleVisibleSelection" type="checkbox" aria-label="Select visible orders"></th>
+                  <th scope="col">Order</th>
+                  <th scope="col">Buyer</th>
+                  <th scope="col">Holder</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Ticket</th>
+                  <th scope="col">Amount</th>
+                </tr>
+              </thead>
+              <tbody id="ordersTable">
+                <tr><td colspan="7" class="empty">Load orders to preview them before deletion.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <section class="danger-zone">
+            <div>
+              <h3>Bulk delete orders</h3>
+              <p>Type DELETE, then delete selected orders or every loaded order.</p>
+            </div>
+            <label class="confirm">
+              Confirmation
+              <input id="deleteConfirm" type="text" placeholder="DELETE" autocomplete="off">
+            </label>
+            <div class="delete-actions">
+              <button id="deleteSelectedBtn" class="danger" type="button" disabled>Delete Selected</button>
+              <button id="deleteAllBtn" class="danger ghost" type="button" disabled>Delete All</button>
+              <button id="cancelDeleteBtn" class="secondary" type="button" disabled>Cancel</button>
+            </div>
+          </section>
+
+          <section class="progress-panel">
+            <div class="progress-top">
+              <span id="progressText">Idle</span>
+              <span id="progressPercent">0%</span>
+            </div>
+            <progress id="deleteProgress" max="100" value="0"></progress>
+            <p id="currentOrder">No active deletion.</p>
+          </section>
+
+          <section class="summary">
+            <h3>Summary</h3>
+            <dl>
+              <div><dt>Deleted</dt><dd id="deletedSummary">0</dd></div>
+              <div><dt>Failed</dt><dd id="failedSummary">0</dd></div>
+              <div><dt>Skipped</dt><dd id="skippedSummary">0</dd></div>
+              <div><dt>Time</dt><dd id="timeSummary">0s</dd></div>
+            </dl>
+            <button id="downloadReportBtn" class="secondary" type="button" disabled>Download CSV Report</button>
+          </section>
+        </section>
+
+        <section class="panel placeholder" id="attendees">
+          <h2>Attendees</h2>
+          <div class="feature-strip"><span>Export</span><span>Delete</span></div>
+        </section>
+        <section class="panel placeholder" id="speakers"><h2>Speakers</h2><p>Coming next.</p></section>
+        <section class="panel placeholder" id="exhibitors"><h2>Exhibitors</h2><p>Coming next.</p></section>
+        <section class="panel placeholder" id="coupons"><h2>Coupons</h2><p>Coming next.</p></section>
+        <section class="panel placeholder" id="sessions"><h2>Sessions</h2><p>Coming next.</p></section>
+        <section class="panel placeholder" id="apiExplorer"><h2>API Explorer</h2><p>Coming next.</p></section>
+        <section class="panel placeholder" id="testData"><h2>Test Data Generator</h2><p>Coming next.</p></section>
+        <section class="panel placeholder" id="logs">
+          <h2>Logs</h2>
+          <ol id="logsList" class="logs"></ol>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="src/popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Accelevents QA Toolkit",
+  "description": "QA utilities for Accelevents Admin pages.",
+  "version": "1.0.0",
+  "action": {
+    "default_title": "Accelevents QA Toolkit",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "permissions": ["downloads", "storage", "tabs", "scripting"],
+  "host_permissions": [
+    "https://www.devaccel.com/*",
+    "https://api.devaccel.com/*",
+    "https://www.stagingaccel.com/*",
+    "https://api.stagingaccel.com/*",
+    "https://www.accelevents.com/*",
+    "https://api.accelevents.com/*"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "accelevents-qa-toolkit",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "check": "npm run lint"
+  },
+  "devDependencies": {
+    "eslint": "^9.32.0"
+  }
+}
