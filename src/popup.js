@@ -82,6 +82,7 @@ async function init() {
 
     const [{ result: token }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
+      world: "MAIN",
       func: () => {
         return window.sessionStorage.getItem("sessionToken") || 
                window.localStorage.getItem("sessionToken") || 
