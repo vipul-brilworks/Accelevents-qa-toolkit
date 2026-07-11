@@ -84,16 +84,14 @@ async function init() {
       target: { tabId: tab.id },
       world: "MAIN",
       func: () => {
-        return window.sessionStorage.getItem("sessionToken") || 
-               window.localStorage.getItem("sessionToken") || 
-               window.sessionStorage.getItem("token") || 
-               window.localStorage.getItem("token");
+        const tokenCookie = document.cookie
+          .split("; ")
+          .find((c) => c.startsWith("token="));
+        return tokenCookie
+          ? decodeURIComponent(tokenCookie.split("=")[1])
+          : null;
       }
     });
-
-    if (!token) {
-      throw new Error("No active session token found. Please log in to Accelevents.");
-    }
 
     state.context.sessionToken = token;
 

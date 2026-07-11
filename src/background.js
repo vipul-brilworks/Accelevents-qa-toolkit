@@ -180,10 +180,6 @@ function assertEnvironmentContext(context) {
   if (!context.apiOrigin || !context.eventSlug) {
     throw new Error("Unable to detect current event.");
   }
-
-  if (!context.sessionToken) {
-    throw new Error("No active session token found. Please log in to Accelevents.");
-  }
 }
 
 /**
