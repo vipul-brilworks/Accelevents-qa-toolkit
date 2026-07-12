@@ -2,6 +2,7 @@ import { buildOrdersCsv, downloadCsv } from "./csv.js";
 import { DeleteController } from "./deleter.js";
 import { filterOrders, getUniqueOptions, summarizeReport } from "./orders.js";
 import { loadSettings, saveSettings } from "./storage.js";
+import { saveUIState, restoreUIState } from "./ui-state.js";
 import { detectEnvironmentContext, getUrlDiagnostics } from "./url.js";
 
 const state = {
@@ -10,7 +11,11 @@ const state = {
   visibleOrders: [],
   selectedIds: new Set(),
   deleteController: null,
-  lastResults: []
+  lastResults: [],
+  sendRefundEmail: false,
+  sort: { key: "orderNumber", dir: "asc" },
+  lastClickedRowIndex: -1,
+  failedOrders: []
 };
 
 /** @param {string} id @returns {HTMLElement} */
@@ -40,11 +45,14 @@ const elements = {
   loadedPages: $("loadedPages"),
   ordersTable: $("ordersTable"),
   toggleVisibleSelection: $("toggleVisibleSelection"),
-  deleteConfirm: $("deleteConfirm"),
+  refundEmailToggle: $("refundEmailToggle"),
   deleteSelectedBtn: $("deleteSelectedBtn"),
+  deleteSelectedCount: $("deleteSelectedCount"),
   deleteAllBtn: $("deleteAllBtn"),
+  deleteAllCount: $("deleteAllCount"),
   cancelDeleteBtn: $("cancelDeleteBtn"),
   progressText: $("progressText"),
+  progressEta: $("progressEta"),
   progressPercent: $("progressPercent"),
   deleteProgress: $("deleteProgress"),
   currentOrder: $("currentOrder"),
@@ -52,11 +60,47 @@ const elements = {
   failedSummary: $("failedSummary"),
   skippedSummary: $("skippedSummary"),
   timeSummary: $("timeSummary"),
+  retryFailedBtn: $("retryFailedBtn"),
   downloadReportBtn: $("downloadReportBtn"),
   logsList: $("logsList")
 };
 
 init();
+
+// ─── Session state helpers ────────────────────────────────────────────────────
+
+let _saveTimer = null;
+
+/** Debounces state saves to avoid excessive writes during rapid filter changes. */
+function scheduleSaveState() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(persistState, 400);
+}
+
+async function persistState() {
+  if (!state.context) return;
+  try {
+    await saveUIState({
+      eventSlug:       state.context.eventSlug,
+      orders:          state.orders,
+      selectedIds:     [...state.selectedIds],
+      sort:            state.sort,
+      sendRefundEmail: state.sendRefundEmail,
+      loadedPages:     elements.loadedPages.textContent,
+      filters: {
+        buyer:      elements.buyerFilter.value,
+        holder:     elements.holderFilter.value,
+        status:     elements.statusFilter.value,
+        ticketType: elements.ticketTypeFilter.value,
+        price:      elements.priceFilter.value
+      },
+      activeSection: document.querySelector(".nav-item.active")?.dataset.section ?? "orders",
+      scrollTop:     document.querySelector(".content")?.scrollTop ?? 0
+    });
+  } catch {
+    // Non-critical; swallow silently.
+  }
+}
 
 /**
  * Initializes popup state from stored settings and the active tab URL.
@@ -65,9 +109,15 @@ init();
 async function init() {
   wireNavigation();
   wireEvents();
+  wireHoldButtons();
+  wireSortHeaders();
 
   const settings = await loadSettings();
   elements.concurrencySelect.value = String(settings.concurrency);
+
+  // Restore persisted session state before hitting the API.
+  const saved = await restoreUIState();
+  if (saved) applyRestoredState(saved);
 
   const tab = await getActiveTab();
 
@@ -99,10 +149,60 @@ async function init() {
 
     renderEnvironmentContext(state.context);
     setWorkflowEnabled(true);
+
+    // If we restored orders for the same event, render them immediately
+    // without an extra API round-trip.
+    if (saved?.eventSlug === state.context.eventSlug && state.orders.length) {
+      populateFilterOptions();
+      applyFilters();
+      log(`Restored ${state.orders.length} order(s) from previous session.`);
+    }
+
     log(`Ready on ${state.context.pathname}.`);
   } catch (error) {
     showContextDetectionFailure(tab.url, getErrorMessage(error));
     setWorkflowEnabled(false);
+  }
+}
+
+/**
+ * Applies a persisted session snapshot to state and DOM before the API is called.
+ * @param {object} saved
+ * @returns {void}
+ */
+function applyRestoredState(saved) {
+  if (Array.isArray(saved.orders))      state.orders = saved.orders;
+  if (Array.isArray(saved.selectedIds)) state.selectedIds = new Set(saved.selectedIds);
+  if (saved.sort?.key)                  state.sort = saved.sort;
+
+  if (typeof saved.sendRefundEmail === "boolean") {
+    state.sendRefundEmail = saved.sendRefundEmail;
+    elements.refundEmailToggle.checked = state.sendRefundEmail;
+  }
+
+  if (saved.loadedPages) elements.loadedPages.textContent = saved.loadedPages;
+
+  if (saved.filters) {
+    elements.buyerFilter.value      = saved.filters.buyer      ?? "";
+    elements.holderFilter.value     = saved.filters.holder     ?? "";
+    elements.priceFilter.value      = saved.filters.price      ?? "";
+    // status and ticketType are restored after populateFilterOptions() runs.
+  }
+
+  if (saved.activeSection) {
+    document.querySelectorAll(".nav-item").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.section === saved.activeSection);
+    });
+    document.querySelectorAll(".panel").forEach((panel) => {
+      panel.classList.toggle("active", panel.id === saved.activeSection);
+    });
+  }
+
+  if (typeof saved.scrollTop === "number") {
+    requestAnimationFrame(() => {
+      const content = document.querySelector(".content");
+      if (content) content.scrollTop = saved.scrollTop;
+    });
   }
 }
 
@@ -127,11 +227,24 @@ async function getActiveTab() {
  */
 function renderEnvironmentContext(context) {
   elements.unsupported.classList.add("hidden");
-  elements.eventSlug.textContent = `Event: ${context.eventSlug}`;
+  elements.eventSlug.textContent = context.eventSlug;
+
   elements.contextEnvironment.textContent = context.environment;
-  elements.contextWebsite.textContent = new URL(context.webOrigin).hostname;
-  elements.contextApi.textContent = new URL(context.apiOrigin).hostname;
+  elements.contextEnvironment.dataset.env = context.environment;
+
+  const webHost = new URL(context.webOrigin).hostname;
+  const apiHost = new URL(context.apiOrigin).hostname;
+
+  elements.contextWebsite.textContent    = webHost;
+  elements.contextWebsite.title          = webHost;
+  elements.contextWebsite.dataset.label  = "Web";
+
+  elements.contextApi.textContent   = apiHost;
+  elements.contextApi.title         = apiHost;
+  elements.contextApi.dataset.label = "API";
+
   elements.contextEvent.textContent = context.eventSlug;
+  elements.contextEvent.title       = context.eventSlug;
 }
 
 /**
@@ -178,6 +291,7 @@ function wireNavigation() {
       button.classList.add("active");
       const panel = $(button.dataset.section);
       panel.classList.add("active");
+      scheduleSaveState();
     });
   });
 }
@@ -193,10 +307,12 @@ function wireEvents() {
   elements.selectVisibleBtn.addEventListener("click", () => {
     state.visibleOrders.forEach((order) => state.selectedIds.add(order.id));
     renderOrders();
+    scheduleSaveState();
   });
   elements.clearSelectionBtn.addEventListener("click", () => {
     state.selectedIds.clear();
     renderOrders();
+    scheduleSaveState();
   });
   elements.toggleVisibleSelection.addEventListener("change", () => {
     if (elements.toggleVisibleSelection.checked) {
@@ -205,29 +321,126 @@ function wireEvents() {
       state.visibleOrders.forEach((order) => state.selectedIds.delete(order.id));
     }
     renderOrders();
+    scheduleSaveState();
   });
 
   [elements.buyerFilter, elements.holderFilter, elements.statusFilter, elements.ticketTypeFilter, elements.priceFilter]
-    .forEach((input) => input.addEventListener("input", applyFilters));
+    .forEach((input) => input.addEventListener("input", () => {
+      applyFilters();
+      scheduleSaveState();
+    }));
 
   elements.concurrencySelect.addEventListener("change", async () => {
     try {
       await saveSettings({ concurrency: Number(elements.concurrencySelect.value) });
       log(`Concurrency set to ${elements.concurrencySelect.value}.`);
+      scheduleSaveState();
     } catch (error) {
       log(`Unable to save concurrency: ${getErrorMessage(error)}`, "error");
     }
   });
 
-  elements.deleteConfirm.addEventListener("input", updateDeleteButtons);
-  elements.deleteSelectedBtn.addEventListener("click", () => startDelete(getSelectedOrders()));
-  elements.deleteAllBtn.addEventListener("click", () => startDelete(state.orders));
+  elements.deleteSelectedBtn.addEventListener("hold-confirmed", () => startDelete(getSelectedOrders()));
+  elements.deleteAllBtn.addEventListener("hold-confirmed", () => startDelete(state.orders));
   elements.cancelDeleteBtn.addEventListener("click", () => {
     state.deleteController?.cancel();
     elements.cancelDeleteBtn.disabled = true;
     log("Cancellation requested.");
   });
+  elements.retryFailedBtn.addEventListener("click", () => {
+    if (state.failedOrders.length) startDelete(state.failedOrders);
+  });
   elements.downloadReportBtn.addEventListener("click", downloadReport);
+
+  elements.refundEmailToggle.addEventListener("change", () => {
+    state.sendRefundEmail = elements.refundEmailToggle.checked;
+    log(`Send Refund Email: ${state.sendRefundEmail ? "ON" : "OFF"}.`);
+    scheduleSaveState();
+  });
+}
+
+/**
+ * Attaches hold-to-confirm behaviour to every .hold-btn.
+ * Fires a 'hold-confirmed' CustomEvent after a 2-second sustained press.
+ * @returns {void}
+ */
+function wireHoldButtons() {
+  const HOLD_MS = 2000;
+  document.querySelectorAll(".hold-btn").forEach((btn) => {
+    btn.style.setProperty("--hold-duration", `${HOLD_MS}ms`);
+    let timer = null;
+
+    const start = () => {
+      if (btn.disabled) return;
+      btn.classList.add("holding");
+      timer = setTimeout(() => {
+        btn.classList.remove("holding");
+        btn.dispatchEvent(new CustomEvent("hold-confirmed", { bubbles: true }));
+      }, HOLD_MS);
+    };
+    const cancel = () => {
+      clearTimeout(timer);
+      timer = null;
+      btn.classList.remove("holding");
+    };
+
+    btn.addEventListener("mousedown",   start);
+    btn.addEventListener("mouseup",     cancel);
+    btn.addEventListener("mouseleave",  cancel);
+    btn.addEventListener("touchstart",  (e) => { e.preventDefault(); start(); }, { passive: false });
+    btn.addEventListener("touchend",    cancel);
+    btn.addEventListener("touchcancel", cancel);
+  });
+}
+
+/**
+ * Wires click handlers on sortable column headers.
+ * @returns {void}
+ */
+function wireSortHeaders() {
+  document.querySelectorAll("th.sortable").forEach((th) => {
+    th.addEventListener("click", () => {
+      const key = th.dataset.sort;
+      if (state.sort.key === key) {
+        state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
+      } else {
+        state.sort.key = key;
+        state.sort.dir = "asc";
+      }
+      renderOrders();
+      scheduleSaveState();
+    });
+  });
+}
+
+/**
+ * Returns a sorted copy of orders by the current sort state.
+ * @param {Array<object>} orders
+ * @returns {Array<object>}
+ */
+function sortOrders(orders) {
+  const { key, dir } = state.sort;
+  return [...orders].sort((a, b) => {
+    const av = a[key] ?? "";
+    const bv = b[key] ?? "";
+    const cmp = key === "amount"
+      ? Number(av) - Number(bv)
+      : String(av).localeCompare(String(bv), undefined, { numeric: true });
+    return dir === "asc" ? cmp : -cmp;
+  });
+}
+
+/**
+ * Updates sort-direction CSS classes on header cells.
+ * @returns {void}
+ */
+function updateSortIndicators() {
+  document.querySelectorAll("th.sortable").forEach((th) => {
+    th.classList.remove("sort-asc", "sort-desc");
+    if (th.dataset.sort === state.sort.key) {
+      th.classList.add(state.sort.dir === "asc" ? "sort-asc" : "sort-desc");
+    }
+  });
 }
 
 /**
@@ -256,6 +469,7 @@ async function loadOrders() {
     elements.loadedPages.textContent = String(response.pagesLoaded || 0);
     populateFilterOptions();
     applyFilters();
+    scheduleSaveState();
     log(`Loaded ${state.orders.length} orders across ${response.pagesLoaded} page(s).`);
   } catch (error) {
     showEmpty(getErrorMessage(error));
@@ -304,6 +518,7 @@ function applyFilters() {
 
 /**
  * Renders the order preview table and selection counters.
+ * Applies current sort, row-selected highlighting, shift-click, and keyboard nav.
  * @returns {void}
  */
 function renderOrders() {
@@ -313,17 +528,25 @@ function renderOrders() {
   elements.toggleVisibleSelection.checked = state.visibleOrders.length > 0 && state.visibleOrders.every((order) => state.selectedIds.has(order.id));
   elements.toggleVisibleSelection.indeterminate = state.visibleOrders.some((order) => state.selectedIds.has(order.id)) && !elements.toggleVisibleSelection.checked;
 
+  updateSortIndicators();
+  updateDeleteButtons();
+
   if (!state.visibleOrders.length) {
     showEmpty(state.orders.length ? "No orders match the current filters." : "Load orders to preview them before deletion.");
-    updateDeleteButtons();
     return;
   }
 
+  const sorted = sortOrders(state.visibleOrders);
   const fragment = document.createDocumentFragment();
-  state.visibleOrders.forEach((order) => {
+
+  sorted.forEach((order, rowIndex) => {
     const row = document.createElement("tr");
+    row.dataset.orderId = order.id;
+    row.tabIndex = 0;
+    if (state.selectedIds.has(order.id)) row.classList.add("row-selected");
+
     row.innerHTML = `
-      <td><input type="checkbox" data-order-id="${escapeHtml(order.id)}" aria-label="Select order ${escapeHtml(order.orderNumber || order.id)}"></td>
+      <td><input type="checkbox" data-order-id="${escapeHtml(order.id)}" aria-label="Select order ${escapeHtml(order.orderNumber || order.id)}" ${state.selectedIds.has(order.id) ? "checked" : ""}></td>
       <td><strong>${escapeHtml(order.orderNumber || order.id)}</strong><small>${escapeHtml(order.id)}</small></td>
       <td>${escapeHtml(order.buyerEmail || "-")}</td>
       <td>${escapeHtml(order.holderEmail || "-")}</td>
@@ -331,18 +554,67 @@ function renderOrders() {
       <td>${escapeHtml(order.ticketType)}</td>
       <td>${order.isFree ? "Free" : escapeHtml(formatMoney(order.amount))}</td>
     `;
-    const checkbox = row.querySelector("input");
-    checkbox.checked = state.selectedIds.has(order.id);
+
+    const checkbox = row.querySelector("input[type='checkbox']");
+
+    // Checkbox change — single row toggle.
     checkbox.addEventListener("change", (event) => {
       if (event.target.checked) state.selectedIds.add(order.id);
       else state.selectedIds.delete(order.id);
+      state.lastClickedRowIndex = rowIndex;
       renderOrders();
+      scheduleSaveState();
     });
+
+    // Row click — shift-click range selection; plain click toggles.
+    row.addEventListener("click", (event) => {
+      if (event.target === checkbox) return; // handled above
+      if (event.shiftKey && state.lastClickedRowIndex >= 0) {
+        const lo = Math.min(state.lastClickedRowIndex, rowIndex);
+        const hi = Math.max(state.lastClickedRowIndex, rowIndex);
+        const select = state.selectedIds.has(sorted[state.lastClickedRowIndex].id);
+        for (let i = lo; i <= hi; i++) {
+          if (select) state.selectedIds.add(sorted[i].id);
+          else        state.selectedIds.delete(sorted[i].id);
+        }
+      } else {
+        if (state.selectedIds.has(order.id)) state.selectedIds.delete(order.id);
+        else state.selectedIds.add(order.id);
+        state.lastClickedRowIndex = rowIndex;
+      }
+      renderOrders();
+      scheduleSaveState();
+    });
+
+    // Keyboard — Space toggles; ArrowUp/Down moves focus.
+    row.addEventListener("keydown", (event) => {
+      if (event.key === " ") {
+        event.preventDefault();
+        if (state.selectedIds.has(order.id)) state.selectedIds.delete(order.id);
+        else state.selectedIds.add(order.id);
+        state.lastClickedRowIndex = rowIndex;
+        renderOrders();
+        scheduleSaveState();
+        // Restore focus to the same logical row after re-render.
+        requestAnimationFrame(() => {
+          const rows = elements.ordersTable.querySelectorAll("tr[data-order-id]");
+          if (rows[rowIndex]) rows[rowIndex].focus();
+        });
+      } else if (event.key === "ArrowDown") {
+        event.preventDefault();
+        const rows = elements.ordersTable.querySelectorAll("tr[data-order-id]");
+        if (rows[rowIndex + 1]) rows[rowIndex + 1].focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        const rows = elements.ordersTable.querySelectorAll("tr[data-order-id]");
+        if (rows[rowIndex - 1]) rows[rowIndex - 1].focus();
+      }
+    });
+
     fragment.append(row);
   });
 
   elements.ordersTable.replaceChildren(fragment);
-  updateDeleteButtons();
 }
 
 /**
@@ -351,17 +623,23 @@ function renderOrders() {
  * @returns {Promise<void>}
  */
 async function startDelete(orders) {
-  if (!state.context || !orders.length || elements.deleteConfirm.value !== "DELETE") return;
+  if (!state.context || !orders.length) return;
+
+  // Pass the current toggle value so background.js builds the correct URL.
+  state.context.sendRefundEmail = state.sendRefundEmail;
 
   const concurrency = Number(elements.concurrencySelect.value);
+  const startedAt = Date.now();
+
   // Cancellation stops queued work; in-flight API requests are allowed to finish cleanly.
   state.deleteController = new DeleteController({
     context: state.context,
     concurrency,
-    onProgress: updateProgress,
+    onProgress: (progress) => updateProgress(progress, startedAt),
     onCurrent: (order) => {
       elements.currentOrder.textContent = `Deleting ${order.orderNumber || order.id}`;
     },
+    onDeleted: (order) => removeRowLocally(order.id),
     onLog: log
   });
 
@@ -384,10 +662,12 @@ async function startDelete(orders) {
     ];
     const summary = summarizeReport(state.lastResults, elapsedMs);
     renderSummary(summary);
+    state.failedOrders = results.filter((r) => r.status === "failed").map((r) => r.order);
+    elements.retryFailedBtn.disabled = state.failedOrders.length === 0;
     elements.downloadReportBtn.disabled = false;
-    await downloadReportSilently();
     log(`Deletion finished in ${formatElapsed(elapsedMs)}.`);
     await refreshActiveTab();
+    scheduleSaveState();
   } catch (error) {
     log(`Deletion stopped: ${getErrorMessage(error)}`, "error");
   } finally {
@@ -405,14 +685,45 @@ function getSelectedOrders() {
 }
 
 /**
- * Updates progress UI from the deletion controller.
- * @param {{ completed: number, total: number, percent: number }} progress
+ * Removes a single order from state and the DOM immediately after deletion.
+ * Updates counters inline — no full re-render needed.
+ * @param {string} orderId
  * @returns {void}
  */
-function updateProgress(progress) {
+function removeRowLocally(orderId) {
+  state.orders        = state.orders.filter((o) => o.id !== orderId);
+  state.visibleOrders = state.visibleOrders.filter((o) => o.id !== orderId);
+  state.selectedIds.delete(orderId);
+
+  const row = elements.ordersTable.querySelector(`tr[data-order-id="${orderId}"]`);
+  if (row) row.remove();
+
+  elements.totalCount.textContent    = String(state.orders.length);
+  elements.visibleCount.textContent  = String(state.visibleOrders.length);
+  elements.selectedCount.textContent = String(state.selectedIds.size);
+  elements.deleteSelectedCount.textContent = String(state.selectedIds.size);
+  elements.deleteAllCount.textContent      = String(state.orders.length);
+}
+
+/**
+ * Updates progress UI from the deletion controller.
+ * @param {{ completed: number, total: number, percent: number }} progress
+ * @param {number} startedAt  — Date.now() when the run began
+ * @returns {void}
+ */
+function updateProgress(progress, startedAt) {
   elements.deleteProgress.value = progress.percent;
   elements.progressPercent.textContent = `${progress.percent}%`;
-  elements.progressText.textContent = `${progress.completed} of ${progress.total} processed`;
+  elements.progressText.textContent = `${progress.completed} / ${progress.total}`;
+
+  if (progress.completed > 0 && progress.completed < progress.total) {
+    const elapsed = Date.now() - startedAt;
+    const perItem = elapsed / progress.completed;
+    const remainingMs = (progress.total - progress.completed) * perItem;
+    elements.progressEta.textContent = `ETA ${formatElapsed(remainingMs)}`;
+  } else {
+    elements.progressEta.textContent = "";
+  }
 }
 
 /**
@@ -454,18 +765,6 @@ async function downloadReport() {
 }
 
 /**
- * Attempts automatic report download without failing the completed delete run.
- * @returns {Promise<void>}
- */
-async function downloadReportSilently() {
-  try {
-    await downloadCsv(buildFilename("delete-report"), buildOrdersCsv(state.orders, state.lastResults), { saveAs: false });
-  } catch (error) {
-    log(`Automatic report download failed: ${getErrorMessage(error)}`, "error");
-  }
-}
-
-/**
  * Refreshes the active tab through the service worker.
  * @returns {Promise<void>}
  */
@@ -493,9 +792,11 @@ function buildFilename(kind) {
  * @returns {void}
  */
 function updateDeleteButtons() {
-  const confirmed = elements.deleteConfirm.value === "DELETE";
-  elements.deleteSelectedBtn.disabled = !confirmed || state.selectedIds.size === 0 || Boolean(state.deleteController);
-  elements.deleteAllBtn.disabled = !confirmed || state.orders.length === 0 || Boolean(state.deleteController);
+  const busy = Boolean(state.deleteController);
+  elements.deleteSelectedBtn.disabled = busy || state.selectedIds.size === 0;
+  elements.deleteAllBtn.disabled = busy || state.orders.length === 0;
+  elements.deleteSelectedCount.textContent = String(state.selectedIds.size);
+  elements.deleteAllCount.textContent = String(state.orders.length);
 }
 
 /**
@@ -505,7 +806,6 @@ function updateDeleteButtons() {
  */
 function setDeleteRunning(isRunning) {
   elements.cancelDeleteBtn.disabled = !isRunning;
-  elements.deleteConfirm.disabled = isRunning;
   elements.deleteSelectedBtn.disabled = isRunning;
   elements.deleteAllBtn.disabled = isRunning;
   elements.loadOrdersBtn.disabled = isRunning;
@@ -537,8 +837,7 @@ function setWorkflowEnabled(enabled) {
     elements.refreshOrdersBtn,
     elements.exportPreviewBtn,
     elements.selectVisibleBtn,
-    elements.clearSelectionBtn,
-    elements.deleteConfirm
+    elements.clearSelectionBtn
   ].forEach((element) => {
     element.disabled = !enabled;
   });
@@ -551,9 +850,12 @@ function setWorkflowEnabled(enabled) {
  */
 function resetDeletionUi() {
   state.lastResults = [];
+  state.failedOrders = [];
+  elements.retryFailedBtn.disabled = true;
   elements.downloadReportBtn.disabled = true;
   elements.deleteProgress.value = 0;
   elements.progressPercent.textContent = "0%";
+  elements.progressEta.textContent = "";
   elements.currentOrder.textContent = "No active deletion.";
   renderSummary({ deleted: 0, failed: 0, skipped: 0, elapsedMs: 0 });
 }

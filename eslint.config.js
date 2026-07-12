@@ -8,11 +8,14 @@ export default [
         Blob: "readonly",
         URL: "readonly",
         chrome: "readonly",
+        clearTimeout: "readonly",
         console: "readonly",
+        CustomEvent: "readonly",
         document: "readonly",
         fetch: "readonly",
         Option: "readonly",
         performance: "readonly",
+        requestAnimationFrame: "readonly",
         setTimeout: "readonly",
         window: "readonly"
       }

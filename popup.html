@@ -19,6 +19,7 @@
 
         <nav class="nav-list">
           <button class="nav-item active" data-section="orders" type="button">Orders</button>
+          <button class="nav-item" data-section="orderForms" type="button">Order Forms</button>
           <button class="nav-item" data-section="attendees" type="button">Attendees</button>
           <button class="nav-item" data-section="speakers" type="button">Speakers</button>
           <button class="nav-item" data-section="exhibitors" type="button">Exhibitors</button>
@@ -31,29 +32,18 @@
       </aside>
 
       <section class="content">
-        <div id="unsupported" class="banner hidden" role="status">
-          Open this extension on a <strong>https://www.devaccel.com/*</strong> admin page.
-        </div>
+        <div id="unsupported" class="banner hidden" role="status"></div>
 
+        <!-- ═══════════════════════════════════════════════════════ ORDERS -->
         <section class="panel active" id="orders">
-          <section class="context-card" aria-label="Detected environment">
-            <div>
-              <dt>Environment</dt>
-              <dd id="contextEnvironment">Detecting...</dd>
-            </div>
-            <div>
-              <dt>Website</dt>
-              <dd id="contextWebsite">Detecting...</dd>
-            </div>
-            <div>
-              <dt>API</dt>
-              <dd id="contextApi">Detecting...</dd>
-            </div>
-            <div>
-              <dt>Current Event</dt>
-              <dd id="contextEvent">Detecting...</dd>
-            </div>
-          </section>
+
+          <!-- Compact environment header -->
+          <div class="context-card" aria-label="Detected environment">
+            <span class="env-badge" id="contextEnvironment">...</span>
+            <span class="context-item" id="contextWebsite" title=""></span>
+            <span class="context-item" id="contextApi" title=""></span>
+            <span class="context-event" id="contextEvent" title="">Detecting event...</span>
+          </div>
 
           <header class="panel-header">
             <div>
@@ -111,7 +101,7 @@
               Concurrency
               <select id="concurrencySelect">
                 <option value="1">1</option>
-                <option value="3">3</option>
+                <option value="3" selected>3</option>
                 <option value="5">5</option>
               </select>
             </label>
@@ -125,16 +115,16 @@
           </div>
 
           <div class="table-wrap">
-            <table>
+            <table id="ordersTableEl" aria-label="Orders">
               <thead>
                 <tr>
-                  <th scope="col"><input id="toggleVisibleSelection" type="checkbox" aria-label="Select visible orders"></th>
-                  <th scope="col">Order</th>
-                  <th scope="col">Buyer</th>
-                  <th scope="col">Holder</th>
-                  <th scope="col">Status</th>
-                  <th scope="col">Ticket</th>
-                  <th scope="col">Amount</th>
+                  <th scope="col"><input id="toggleVisibleSelection" type="checkbox" aria-label="Select all visible orders"></th>
+                  <th scope="col" data-sort="orderNumber" class="sortable">Order <span class="sort-icon" aria-hidden="true"></span></th>
+                  <th scope="col" data-sort="buyerEmail" class="sortable">Buyer <span class="sort-icon" aria-hidden="true"></span></th>
+                  <th scope="col" data-sort="holderEmail" class="sortable">Holder <span class="sort-icon" aria-hidden="true"></span></th>
+                  <th scope="col" data-sort="status" class="sortable">Status <span class="sort-icon" aria-hidden="true"></span></th>
+                  <th scope="col" data-sort="ticketType" class="sortable">Ticket <span class="sort-icon" aria-hidden="true"></span></th>
+                  <th scope="col" data-sort="amount" class="sortable">Amount <span class="sort-icon" aria-hidden="true"></span></th>
                 </tr>
               </thead>
               <tbody id="ordersTable">
@@ -143,18 +133,25 @@
             </table>
           </div>
 
+          <!-- Bulk delete controls — no typing required -->
           <section class="danger-zone">
-            <div>
+            <div class="danger-zone-header">
               <h3>Bulk delete orders</h3>
-              <p>Type DELETE, then delete selected orders or every loaded order.</p>
+              <label class="refund-toggle" title="Controls isRefundEmailSend on the delete endpoint">
+                <input id="refundEmailToggle" type="checkbox">
+                <span>Send Refund Email</span>
+              </label>
             </div>
-            <label class="confirm">
-              Confirmation
-              <input id="deleteConfirm" type="text" placeholder="DELETE" autocomplete="off">
-            </label>
+            <p class="danger-hint">Hold either button for 2 seconds to confirm deletion.</p>
             <div class="delete-actions">
-              <button id="deleteSelectedBtn" class="danger" type="button" disabled>Delete Selected</button>
-              <button id="deleteAllBtn" class="danger ghost" type="button" disabled>Delete All</button>
+              <button id="deleteSelectedBtn" class="danger hold-btn" type="button" disabled
+                      data-hold-label="Hold to confirm…" aria-label="Delete selected orders">
+                Delete Selected (<span id="deleteSelectedCount">0</span>)
+              </button>
+              <button id="deleteAllBtn" class="danger ghost hold-btn" type="button" disabled
+                      data-hold-label="Hold to confirm…" aria-label="Delete all loaded orders">
+                Delete All (<span id="deleteAllCount">0</span>)
+              </button>
               <button id="cancelDeleteBtn" class="secondary" type="button" disabled>Cancel</button>
             </div>
           </section>
@@ -162,6 +159,7 @@
           <section class="progress-panel">
             <div class="progress-top">
               <span id="progressText">Idle</span>
+              <span id="progressEta"></span>
               <span id="progressPercent">0%</span>
             </div>
             <progress id="deleteProgress" max="100" value="0"></progress>
@@ -176,10 +174,19 @@
               <div><dt>Skipped</dt><dd id="skippedSummary">0</dd></div>
               <div><dt>Time</dt><dd id="timeSummary">0s</dd></div>
             </dl>
-            <button id="downloadReportBtn" class="secondary" type="button" disabled>Download CSV Report</button>
+            <div class="summary-actions">
+              <button id="retryFailedBtn" class="secondary" type="button" disabled>Retry Failed</button>
+              <button id="downloadReportBtn" class="secondary" type="button" disabled>Download CSV Report</button>
+            </div>
           </section>
         </section>
+        <!-- ═══════════════════════════════════════════════════ ORDER FORMS -->
+        <section class="panel placeholder" id="orderForms">
+          <h2>Order Forms</h2>
+          <p>Order Form tools coming soon.</p>
+        </section>
 
+        <!-- ══════════════════════════════════════════════════════ PLACEHOLDERS -->
         <section class="panel placeholder" id="attendees">
           <h2>Attendees</h2>
           <div class="feature-strip"><span>Export</span><span>Delete</span></div>

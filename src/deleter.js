@@ -5,11 +5,12 @@ export class DeleteController {
   /**
    * @param {{ context: object, concurrency: number, onProgress?: Function, onCurrent?: Function, onLog?: Function }} options
    */
-  constructor({ context, concurrency, onProgress, onCurrent, onLog }) {
+  constructor({ context, concurrency, onProgress, onCurrent, onDeleted, onLog }) {
     this.context = context;
     this.concurrency = concurrency;
     this.onProgress = onProgress;
     this.onCurrent = onCurrent;
+    this.onDeleted = onDeleted;
     this.onLog = onLog;
     this.cancelled = false;
     this.results = [];
@@ -78,7 +79,9 @@ export class DeleteController {
       if (!response.ok) throw new Error(response.error || "Delete failed.");
 
       this.onLog?.(`Deleted order ${order.orderNumber || order.id}.`);
-      return buildResult(order, "deleted", response.httpStatus, response.message, response.attempts || 1);
+      const result = buildResult(order, "deleted", response.httpStatus, response.message, response.attempts || 1);
+      this.onDeleted?.(order);
+      return result;
     } catch (error) {
       const message = error.message || String(error);
       this.onLog?.(`Failed order ${order.orderNumber || order.id}: ${message}`);

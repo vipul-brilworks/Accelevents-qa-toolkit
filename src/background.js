@@ -80,7 +80,8 @@ async function deleteOrder(context, orderId) {
   assertEnvironmentContext(context);
   if (!orderId) throw new Error("Order id is required.");
 
-  const requestUrl = `${context.apiOrigin}/rest/host/event/${encodeURIComponent(context.eventSlug)}/ticketing/deleteEventTicket/order/${encodeURIComponent(orderId)}?eventTicketingId=0&isRefundEmailSend=false`;
+  const sendRefundEmail = context.sendRefundEmail === true ? "true" : "false";
+  const requestUrl = `${context.apiOrigin}/rest/host/event/${encodeURIComponent(context.eventSlug)}/ticketing/deleteEventTicket/order/${encodeURIComponent(orderId)}?eventTicketingId=0&isRefundEmailSend=${sendRefundEmail}`;
   logRequestDiagnostics(context, requestUrl);
   const { response, attempts } = await requestWithMeta(requestUrl, {
     method: "DELETE",
